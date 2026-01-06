@@ -1,27 +1,22 @@
 export default async function handler(req, res) {
   try {
-    // --- CHANGEMENT ICI ---
-    // Ancienne URL (qui donne 404) : https://portail-api.montpellier3m.fr/wastecontainer?limit=500
-    // Nouvelle URL (Standard FIWARE) :
-    const url = 'https://portail-api.montpellier3m.fr/ngsi-ld/v1/entities?type=WasteContainer&limit=100';
+    // CORRECTION ICI : Ajout de "-data" dans l'URL et limite à 500 points
+    const response = await fetch('https://portail-api-data.montpellier3m.fr/wastecontainer?limit=500');
     
-    const response = await fetch(url);
-
     if (!response.ok) {
-      // On inclut l'URL dans l'erreur pour mieux comprendre si ça recasse
-      throw new Error(`Erreur API (${response.status}) sur ${url}`);
+      throw new Error(`Erreur API Montpellier (${response.status})`);
     }
 
     const data = await response.json();
 
+    // Cache de 5 minutes pour la performance
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+    
+    // On renvoie les données au front
     res.status(200).json(data);
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ 
-        error: 'Impossible de récupérer les données', 
-        details: error.message 
-    });
+    res.status(500).json({ error: 'Erreur serveur', details: error.message });
   }
 }
