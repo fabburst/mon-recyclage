@@ -1,25 +1,27 @@
 export default async function handler(req, res) {
   try {
-    // 1. On appelle l'API de Montpellier depuis le serveur Vercel
-    const response = await fetch('https://portail-api.montpellier3m.fr/wastecontainer?limit=500');
+    // --- CHANGEMENT ICI ---
+    // Ancienne URL (qui donne 404) : https://portail-api.montpellier3m.fr/wastecontainer?limit=500
+    // Nouvelle URL (Standard FIWARE) :
+    const url = 'https://portail-api.montpellier3m.fr/ngsi-ld/v1/entities?type=WasteContainer&limit=100';
     
-    // 2. Si ça échoue, on renvoie l'erreur
+    const response = await fetch(url);
+
     if (!response.ok) {
-      throw new Error(`Erreur API Montpellier: ${response.statusText}`);
+      // On inclut l'URL dans l'erreur pour mieux comprendre si ça recasse
+      throw new Error(`Erreur API (${response.status}) sur ${url}`);
     }
 
-    // 3. On récupère les données JSON
     const data = await response.json();
 
-    // 4. On configure les en-têtes pour autoriser votre site à lire la réponse
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate'); // Cache de 5 min pour être rapide
-
-    // 5. On renvoie les données propres au frontend
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
     res.status(200).json(data);
 
   } catch (error) {
     console.error(error);
-    // En cas de panne totale, on renvoie une erreur propre
-    res.status(500).json({ error: 'Impossible de récupérer les données', details: error.message });
+    res.status(500).json({ 
+        error: 'Impossible de récupérer les données', 
+        details: error.message 
+    });
   }
 }
