@@ -44,42 +44,64 @@
             // Initialisation Carte
             if (!mapRef.current) {
                 mapRef.current = L.map('map').setView([43.6107, 3.8767], 13);
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(mapRef.current);
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                    attribution: '&copy; <a href="https://carto.com/">CARTO</a>'
+                }).addTo(mapRef.current);
             }
 
             // Récupération des données via NOTRE API Vercel (Proxy)
             fetch('/api/glass')
                 .then(res => res.json())
-                .then(data => {
-                    setBins(data);
+                .then(rawData => {
+                    // --- CORRECTION MAJEURE ICI ---
+                    // On transforme les données brutes de l'API Montpellier en format simple utilisable
+                    const validBins = rawData
+                        .filter(item => item.location && item.location.value && item.location.value.coordinates)
+                        .map(item => ({
+                            id: item.id,
+                            lat: item.location.value.coordinates[1], // Latitude (GeoJSON est [lon, lat])
+                            lon: item.location.value.coordinates[0], // Longitude
+                            fillLevel: item.fillingLevel ? Math.round(item.fillingLevel.value) : 0,
+                            type: item.wasteType ? item.wasteType.value : "Verre"
+                        }));
+
+                    setBins(validBins);
                     setLoading(false);
                     
                     // Ajout des marqueurs
-                    data.forEach(bin => {
-                        const lat = bin.geometry.coordinates[1];
-                        const lon = bin.geometry.coordinates[0];
-                        const fill = bin.properties.fillLevel || 0;
-                        
+                    validBins.forEach(bin => {
                         let color = '#22c55e'; // Vert
-                        if (fill > 75) color = '#f97316'; // Orange
-                        if (fill > 90) color = '#ef4444'; // Rouge
+                        if (bin.fillLevel > 75) color = '#f97316'; // Orange
+                        if (bin.fillLevel > 90) color = '#ef4444'; // Rouge
 
-                        L.circleMarker([lat, lon], {
+                        const marker = L.circleMarker([bin.lat, bin.lon], {
                             radius: 6, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.8
                         }).addTo(mapRef.current);
+                        
+                        // Petit popup au clic direct sur le point
+                        marker.bindPopup(`Remplissage: ${bin.fillLevel}%`);
                     });
                 })
-                .catch(err => console.error("Erreur chargement:", err));
+                .catch(err => {
+                    console.error("Erreur chargement:", err);
+                    setLoading(false);
+                });
                 
             lucide.createIcons();
         }, []);
 
         const locateMe = () => {
             if (!navigator.geolocation) return alert("Géolocalisation impossible");
+            
+            setLoading(true); // Petit feedback visuel
+            
             navigator.geolocation.getCurrentPosition(pos => {
                 const { latitude, longitude } = pos.coords;
+                
+                // Zoomer sur l'utilisateur
                 mapRef.current.setView([latitude, longitude], 16);
                 
+                // Marqueur "Vous êtes ici" (bleu par défaut)
                 L.marker([latitude, longitude]).addTo(mapRef.current)
                  .bindPopup("Vous êtes ici").openPopup();
 
@@ -87,11 +109,15 @@
                 if(bins.length > 0) {
                     let minD = Infinity, closest = null;
                     bins.forEach(b => {
-                        const d = getDistance(latitude, longitude, b.geometry.coordinates[1], b.geometry.coordinates[0]);
+                        const d = getDistance(latitude, longitude, b.lat, b.lon);
                         if(d < minD) { minD = d; closest = {...b, dist: d}; }
                     });
                     setNearest(closest);
                 }
+                setLoading(false);
+            }, () => {
+                alert("Erreur de géolocalisation");
+                setLoading(false);
             });
         };
 
@@ -101,7 +127,7 @@
                 
                 <div className="overlay flex flex-col justify-end h-full">
                     <div className="p-4 flex justify-end">
-                        <button onClick={locateMe} className="bg-white p-3 rounded-full shadow-lg text-emerald-600 mb-4 pointer-events-auto">
+                        <button onClick={locateMe} className="bg-white p-3 rounded-full shadow-lg text-emerald-600 mb-4 pointer-events-auto hover:bg-emerald-50 transition">
                             <i data-lucide="crosshair"></i>
                         </button>
                     </div>
@@ -111,29 +137,43 @@
                             <i data-lucide="recycle" className="text-emerald-500"></i> Verre Montpellier
                         </h1>
                         
-                        {loading ? (
+                        {loading && bins.length === 0 ? (
                             <p className="text-gray-500 animate-pulse">Chargement des conteneurs...</p>
                         ) : nearest ? (
                             <div>
-                                <p className="text-sm text-gray-500 uppercase font-semibold">Le plus proche</p>
-                                <h2 className="text-lg font-bold">{nearest.properties.address || "Adresse inconnue"}</h2>
-                                <p className="text-gray-600 mb-3">à {Math.round(nearest.dist)} mètres</p>
-                                
-                                <div className="flex justify-between items-end mb-1">
-                                    <span className="text-sm">Remplissage</span>
-                                    <span className="font-bold">{nearest.properties.fillLevel || 0}%</span>
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <p className="text-xs text-gray-500 uppercase font-semibold tracking-wider">Le plus proche</p>
+                                        {/* L'API ne donne pas d'adresse, on affiche l'ID ou un texte générique */}
+                                        <h2 className="text-lg font-bold text-gray-800">Conteneur à Verre</h2>
+                                        <p className="text-gray-600 mb-3 text-sm">à <span className="font-bold text-emerald-700">{Math.round(nearest.dist)} mètres</span> de vous</p>
+                                    </div>
+                                    <div className="text-right">
+                                         <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                            nearest.fillLevel > 90 ? 'bg-red-100 text-red-800' : 
+                                            nearest.fillLevel > 75 ? 'bg-orange-100 text-orange-800' : 'bg-emerald-100 text-emerald-800'
+                                         }`}>
+                                            {nearest.fillLevel}%
+                                         </span>
+                                    </div>
                                 </div>
-                                <div className="w-full bg-gray-200 rounded-full h-3">
-                                    <div className={`h-3 rounded-full transition-all ${
-                                        (nearest.properties.fillLevel || 0) > 90 ? 'bg-red-500' : 
-                                        (nearest.properties.fillLevel || 0) > 75 ? 'bg-orange-500' : 'bg-emerald-500'
-                                    }`} style={{width: `${nearest.properties.fillLevel || 0}%`}}></div>
+                                
+                                <div className="mt-2">
+                                    <div className="flex justify-between items-end mb-1">
+                                        <span className="text-sm text-gray-500">Niveau de remplissage</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                                        <div className={`h-3 rounded-full transition-all duration-1000 ${
+                                            nearest.fillLevel > 90 ? 'bg-red-500' : 
+                                            nearest.fillLevel > 75 ? 'bg-orange-500' : 'bg-emerald-500'
+                                        }`} style={{width: `${nearest.fillLevel}%`}}></div>
+                                    </div>
                                 </div>
                             </div>
                         ) : (
                             <div className="text-center py-4">
-                                <p className="text-gray-600 mb-4">Localisez-vous pour trouver un conteneur.</p>
-                                <button onClick={locateMe} className="bg-emerald-600 text-white w-full py-3 rounded-xl font-bold">
+                                <p className="text-gray-600 mb-4">Localisez-vous pour trouver le conteneur le plus proche.</p>
+                                <button onClick={locateMe} className="bg-emerald-600 text-white w-full py-3 rounded-xl font-bold shadow-lg hover:bg-emerald-700 transition">
                                     Me localiser
                                 </button>
                             </div>
